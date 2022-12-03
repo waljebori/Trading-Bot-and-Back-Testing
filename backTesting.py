@@ -23,7 +23,7 @@
 #7. Create a local JSON file of all the candle data so API isn't hit so much. Edit program accordingly
 #################################################################################################
 #################################################################################################
-
+ 
 #Libraries
 import urllib.parse
 import hashlib
