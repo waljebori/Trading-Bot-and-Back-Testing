@@ -14,16 +14,15 @@
 #To-be done:
 #1. Add ADX as a signal parameter. ADX must be > 30
 #2. Optimize maximum range between PT and SL for potentially large candles, see how results affected
-#3. Hoffman wants the price to break within the next 20 bars according to the time frame used. Code this
-#4. Loop over optimization parameters to maximize win rate and account Balance
-#5. Store results and optimization parameters of automated tests in a SQL database for later analysis
+#3. Loop over optimization parameters to run automated tests that maximize win rate and account Balance
+#4. Store results and optimization parameters of automated tests in a SQL database for later analysis
 #5. Analyze the losses to see if you can find any similar themes, consider skipping short candles
 #6. Create an "Overwritten signals" dictionary that stores the old data when a new signal is found before the entry is hit
 #### Store the old signal time, the old entry price, the new signal time, and the new signal price
-#7. Create a local JSON file of all the candle data so API isn't hit so much. Edit program accordingly
+#7. Skip candles where the high-low is less than 50 (or another number)
 #################################################################################################
 #################################################################################################
- 
+
 #Libraries
 import urllib.parse
 import hashlib
@@ -36,9 +35,15 @@ from datetime import datetime
 from binance import Client, ThreadedWebsocketManager, ThreadedDepthCacheManager
 import json
 #######################################################################################################
+#######################################################################################################
+#Playground
+
+#quit()
+#######################################################################################################
+#######################################################################################################
 #APIkey
-api_key = ''#Add these
-api_secret = ''#Add these
+api_key = 
+api_secret =
 client = Client(api_key, api_secret, tld='us')
 #######################################################################################################
 #######################################################################################################
@@ -52,8 +57,40 @@ file2 = json.load(open("1hr_50EMA_25sep2019.json"))
 file2string = json.dumps(file2)
 hour1_50EMA_dict = json.loads(file2string)
 
-#print(minute15_20EMA_dict[str(1664583300000)])
-#print(hour1_50EMA_dict[1664583300000])
+
+
+#######################################################################################################
+#######################################################################################################
+#Optional local copy of klines to use instead of getting data live from API. API won't be needed
+
+#Don't forget to delete klines = in the variable initializations section
+# file3 = json.load(open("15MinuteKLineCache250919_031222.json")) #Goes through December 3, 2022
+# file3string = json.dumps(file3)
+# all_klines = json.loads(file3string)
+#
+# start_date = "01/01/2022" #"%d/%m/%Y"
+# end_date = "29/11/2022"   #"%d/%m/%Y"
+# start_time_timestamp = int(time.mktime(datetime.strptime(start_date, "%d/%m/%Y").timetuple()))*1000
+# end_time_timestamp = int(time.mktime(datetime.strptime(end_date, "%d/%m/%Y").timetuple()))*1000
+#
+# start_timestamp_index, final_start_timestamp_index = 0, 0
+# end_timestamp_index, final_end_timestamp_index = 0, 0
+#
+# for candle in all_klines:
+#     if candle[0] == start_time_timestamp:
+#         final_start_timestamp_index = start_timestamp_index
+#     elif candle[0] == end_time_timestamp:
+#         final_end_timestamp_index = end_timestamp_index
+#     else:
+#         start_timestamp_index += 1
+#         end_timestamp_index += 1
+#
+# klines = list()
+# klines = all_klines[final_start_timestamp_index:final_end_timestamp_index] #Returns klines for the desired dates by using timestamp indicies
+#######################################################################################################
+#######################################################################################################
+
+
 #######################################################################################################
 #######################################################################################################
 #Functions
@@ -99,21 +136,28 @@ def EMA_comparison(candle_open_time):
 
 def EMA_slope_test(candle_open_time):
     global num_candles_for_slope
-    global minimum_slope
+    global minimum_slope_for_one_candle
     min15_time_difference = 900000 #15 minutes in milliseconds
-    minimum_slope_for_one_candle = minimum_slope/num_candles_for_slope
+    #minimum_slope_for_one_candle = minimum_slope/num_candles_for_slope
     slope_sum = 0
     slope_start_time = candle_open_time - num_candles_for_slope*min15_time_difference
+    mid_point_EMA_value = (minute15_20EMA_dict[str(slope_start_time)] + minute15_20EMA_dict[str(candle_open_time)])/2
 
     #Calculating the average difference in EMA on a candle-by-candle basis
     for timestamp in range(slope_start_time, candle_open_time, min15_time_difference):
-        slope_sum += minute15_20EMA_dict[str(timestamp)]
-    average_slope = slope_sum/num_candles_for_slope
+        slope_sum += minute15_20EMA_dict[str(timestamp)] - minute15_20EMA_dict[str(timestamp - min15_time_difference)]
+    average_slope = slope_sum/num_candles_for_slope/mid_point_EMA_value #percent basis
 
     if average_slope>minimum_slope_for_one_candle:
         return 1
     else:
         return 0
+
+def skipping_doji_candles(candle):
+    #global minimum_range
+    if float(candle[2]) - float(candle[3]) < minimum_range: #high - low
+        return 0
+    else: return 1
 
 def EMA_positivity_check(candle_open_time):
 #Making sure the last x consecutive candles' corresponding EMA values are increasing
@@ -153,43 +197,30 @@ repetition_check_open_time = 0
 current_candle_time = 0
 wins, losses, draws = 0,0,0
 percent_gains_and_losses = list()
-klines = client.get_historical_klines("BTCUSD", Client.KLINE_INTERVAL_15MINUTE, "1 Sep, 2022", "28 Nov, 2022")
+klines = client.get_historical_klines("BTCUSD", Client.KLINE_INTERVAL_15MINUTE, "1 Nov, 2022", "1 Dec, 2022")
 #######################################################################################################
 #######################################################################################################
 global num_candles_for_slope
-global minimum_slope
+global minimum_slope_for_one_candle
 global minimum_consecutive_increasing_candles
-#Optimization Parameters
-maximum_percent_loss = 0.99
-risk_reward_ratio = 1.5
-minimum_slope = 16045/15800
-num_candles_for_slope = 40 #integers only
-minimum_consecutive_increasing_candles = 5 #integers only
-minimum_range = 100.0  #minimum difference between candle high and candle low
-minimum_range_offset = 30.0
-entry_offset = 15.19  #Placing the entry this high above the candle
+#Optimization Parameters #14 hours for 10,000 tests with 5 seconds per test
+#for RRratio in range(1.05,1.95,0.15):
+#    for
+
+risk_reward_ratio = 1.5  #for RRratio in range(1.00,2.00,0.20): 6
+maximum_percent_loss = 1.00 #skip this one for now ########for max_loss in range(0.7,1.4,0.1)
+num_candles_for_slope = 40 #for num_candles in range(20,60,10) 5 #integers only
+minimum_slope_for_one_candle = 20/17000 #for min_EMA_change in range(10,50,10) 5
+minimum_consecutive_increasing_candles = 5 #for min_consec_candles in range(0,30,10) 4 #integers only
+entry_offset = 15.19  #for entry_addition in range(0,30,10) 4 Placing the entry this high above the candle
+stop_loss_offset = 20.0 #for SL_subtraction in range(0,30,10) 4
+
+minimum_range = 100.0  #minimum difference between candle high and candle low, consider skipping these candles
 IRB_percent_limit = 0.45
-stop_loss_offset = 20.0
 #Consider adding maximum range between PT and SL for potentially large candles, see how results affected
 
 
-
 #######################################################################################################
-#######################################################################################################
-#Playground to run only a few lines of code
-# i = 0
-# print(len(klines))
-# for candle in klines:
-#     if i>50:
-#         break
-#     else:
-#         print(i, candle)
-#         i += 1
-# quit()
-# dknkcjdkj
-#######################################################################################################
-#######################################################################################################
-
 
 #Looping over all imported candles, checking if signal is hit, adding trade parameters to dictionary
 for candle in klines:
@@ -199,11 +230,12 @@ for candle in klines:
         #Setting order parameters
         entry_price = float(candle[2]) + entry_offset
         IRB_time = candle[0]
+        #timestamp_20_candles_later = IRB_time + 20*15*60*1000 #results not improved
         results_dictionary[trade_number] = list()
         results_dictionary[trade_number].append(IRB_time)
         SL = float(candle[3]) - stop_loss_offset #IRB low
         if (entry_price - SL) < minimum_range: #SL is too close to the entry, meaning candle is too short
-            SL -= minimum_range_offset #Reducing the stop-loss
+            SL = entry_price - minimum_range #Reducing the stop-loss
 
         percent_risk = SL/entry_price
         if percent_risk < maximum_percent_loss:
@@ -214,6 +246,8 @@ for candle in klines:
         for candle in klines:
             if candle[0] < IRB_time: #skipping candles that came before the signal
                 continue
+            #elif candle[0] > timestamp_20_candles_later: #Per strategy rules, entry must be hit within 20 candles
+            #    break   #Commenting out, didn't seem to improve results at all
             elif float(candle[2]) > float(entry_price): #The entry was hit
                 current_candle_time = candle[0]
                 results_dictionary[trade_number].append(current_candle_time) #entry candle timestamp
@@ -263,7 +297,7 @@ for candle in klines:
                     results_dictionary[trade_number][0] = IRB_time #Overwriting IRB time in dictionary
                     SL = float(candle[3]) - stop_loss_offset
                     if (entry_price - SL) < minimum_range:
-                        SL -= minimum_range_offset
+                        SL = entry_price - minimum_range
                     percent_risk = entry_price/SL
                     if percent_risk > maximum_percent_loss:
                         SL = entry_price - entry_price*maximum_percent_loss
@@ -283,14 +317,17 @@ for key,value in results_dictionary.items():
     if len(value)<4:
         value.append(0.01)
         value.append(946702800000) #Y2K
-        value.append(1.00)
+        value.append(0)
     value[3] = round(float(value[3]), 2)
     value[4] = datetime.fromtimestamp(int(value[4]/1000)).strftime('%Y-%m-%d %H:%M:%S')
+    while len(value)<6:
+        value.append(0)
+        print(value)
     starting_amount *= (value[5]/100+1)
     print(value)
 
 final_amount = round(starting_amount,2)
 
 print("")
-print("Risk/Reward: {}    Minimum Range: {}     Minimum Range Offset: {}     Entry Offset: {}       Candles for Slope: {}".format(risk_reward_ratio, minimum_range, minimum_range_offset, entry_offset, num_candles_for_slope))
+print("Risk/Reward: {}    Minimum Range: {}      Entry Offset: {}       Candles for Slope: {}".format(risk_reward_ratio, minimum_range, entry_offset, num_candles_for_slope))
 print("Wins: {}    Losses: {}     Draws: {}     Win Rate: {}%      Account Balance: ${}".format(wins, losses, draws, round(win_rate,1), final_amount ) )
