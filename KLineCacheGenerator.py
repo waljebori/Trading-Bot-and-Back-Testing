@@ -13,8 +13,8 @@ import statistics
 import json
 #######################################################################################################
 #APIkey
-api_key = 'CNb9b1rOP6nY5CvwRFzFVXARNhBiAhqS1R3GIkFnifhNOPHtFa1ErsVAPv4f2DNC'
-api_secret = 'pngJ89b8B3zU1BEKY8QVxL4X7w9YT5bBT22yjMTYcoxYc5i2GopywxpNCzSgpqjN'
+api_key = 
+api_secret =
 client = Client(api_key, api_secret, tld='us')
 #######################################################################################################
 #Variable initializations
