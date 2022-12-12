@@ -1,3 +1,5 @@
+#Rules of strategy https://www.best-trading-platforms.com/trading-platform-futures-forex-cfd-stocks-nanotrader/inventory-retracement-bar-irb
+
 #Plan/walk-through
 #1. Import the 15 minute candles for the timeperiod you are looking to backtest
 #___ Use klines = client.get_historical_klines("BNBBTC", Client.KLINE_INTERVAL_1MINUTE, "1 day ago UTC")
@@ -14,13 +16,12 @@
 #To-be done:
 #1. Add ADX as a signal parameter. ADX must be > 30
 #2. Optimize maximum range between PT and SL for potentially large candles, see how results affected
-#3. Loop over optimization parameters to run automated tests that maximize win rate and account Balance
-#4. Store results and optimization parameters of automated tests in a SQL database for later analysis
-#5. Analyze the losses to see if you can find any similar themes, consider skipping short candles
-#6. Create an "Overwritten signals" dictionary that stores the old data when a new signal is found before the entry is hit
+#3. Analyze the results to see if you can find any similar themes, consider skipping short candles
+#4. Create an "Overwritten signals" dictionary that stores the old data when a new signal is found before the entry is hit
 #### Store the old signal time, the old entry price, the new signal time, and the new signal price
-#7. Skip candles where the high-low is less than 50 (or another number)
-#8. Change the signal function to also return the entry, PT, and SL. Makes this more versatile for other strategies
+#5. Skip candles where the high-low is less than 50 (or another number)
+#6. Change the signal function to also return the entry, PT, and SL. Makes this more versatile for other strategies
+#7. Continously refine the optimization parameters
 #################################################################################################
 #################################################################################################
 
@@ -38,14 +39,9 @@ import json
 import sqlite3
 #######################################################################################################
 #######################################################################################################
-#Playground
-
-#quit()
-#######################################################################################################
-#######################################################################################################
 #APIkey
-api_key = #Add this
-api_secret = #Add this
+api_key = #Add these
+api_secret = #Add these
 client = Client(api_key, api_secret, tld='us')
 #######################################################################################################
 #######################################################################################################
@@ -58,16 +54,6 @@ minute15_20EMA_dict = json.loads(file1string) # json.loads take a string as inpu
 file2 = json.load(open("1hr_50EMA_25sep2019.json"))
 file2string = json.dumps(file2)
 hour1_50EMA_dict = json.loads(file2string)
-#######################################################################################################
-#######################################################################################################
-#Variable Initializations
-klines = client.get_historical_klines("BTCUSD", Client.KLINE_INTERVAL_15MINUTE, "23 Nov, 2022", "1 Dec, 2022")
-global repetition_check_open_time
-#Parameters not being optimized for the interest of time
-maximum_percent_loss = 1.00 #skip this one for now ########for max_loss in range(0.7,1.4,0.1)
-minimum_range = 100.0  #minimum difference between candle high and candle low, consider skipping these candles
-IRB_percent_limit = 0.45
-optimization_parameters = [0]*6
 #######################################################################################################
 #######################################################################################################
 #Optional local copy of klines to use instead of getting data live from API. API won't be needed
@@ -139,8 +125,9 @@ def EMA_comparison(candle_open_time):
         return 0
 
 def EMA_slope_test(candle_open_time):
+    global min_EMA_change
+    global num_candles_for_slope
     min15_time_difference = 900000 #15 minutes in milliseconds
-    #minimum_slope_for_one_candle = minimum_slope/num_candles_for_slope
     slope_sum = 0
     slope_start_time = candle_open_time - num_candles_for_slope*min15_time_difference
     mid_point_EMA_value = (minute15_20EMA_dict[str(slope_start_time)] + minute15_20EMA_dict[str(candle_open_time)])/2
@@ -148,9 +135,9 @@ def EMA_slope_test(candle_open_time):
     #Calculating the average difference in EMA on a candle-by-candle basis
     for timestamp in range(slope_start_time, candle_open_time, min15_time_difference):
         slope_sum += minute15_20EMA_dict[str(timestamp)] - minute15_20EMA_dict[str(timestamp - min15_time_difference)]
-    average_slope = slope_sum/num_candles_for_slope/mid_point_EMA_value #percent basis
+    average_slope = (slope_sum/num_candles_for_slope)*(mid_point_EMA_value/17000) #percent basis
 
-    if average_slope>minimum_slope_for_one_candle:
+    if average_slope>min_EMA_change:
         return 1
     else:
         return 0
@@ -163,6 +150,7 @@ def skipping_doji_candles(candle):
 
 def EMA_positivity_check(candle_open_time):
     #Making sure the last x consecutive candles' corresponding EMA values are increasing
+    global minimum_consecutive_increasing_candles
     min15_time_difference = 900000 #15 minutes in milliseconds
     positivity_start_time = candle_open_time - minimum_consecutive_increasing_candles*min15_time_difference
 
@@ -195,14 +183,18 @@ def gather_data(optimization_parameters):
     repetition_check_open_time = 0
     current_candle_time = 0
     wins, losses, draws = 0,0,0
+    minimum_range = 100.0
     #######################################################################################################
     #Parameters being optimized
     risk_reward_ratio = optimization_parameters[0]  #for RRratio in range(1.00,2.00,0.20): 6
+    global num_candles_for_slope
     num_candles_for_slope = optimization_parameters[1] #for num_candles in range(20,60,10) 5 #integers only
-    minimum_slope_for_one_candle = optimization_parameters[2] #for min_EMA_change in range(10,50,10) 5
+    global min_EMA_change
+    min_EMA_change = optimization_parameters[2] #for min_EMA_change in range(10,50,10) 5
+    global minimum_consecutive_increasing_candles
     minimum_consecutive_increasing_candles = optimization_parameters[3] #for min_consec_candles in range(0,30,10) 4 #integers only
-    entry_offset = optimization_parameters[4]  #for entry_addition in range(0,30,10) 4 Placing the entry this high above the candle
-    stop_loss_offset = optimization_parameters[5] #for SL_subtraction in range(0,30,10) 4
+    entry_offset = optimization_parameters[4]  #Only in this function
+    stop_loss_offset = optimization_parameters[5] #Only in this function
     #######################################################################################################
 
     for candle in klines:
@@ -214,10 +206,10 @@ def gather_data(optimization_parameters):
             IRB_time = candle[0]
             #timestamp_20_candles_later = IRB_time + 20*15*60*1000 #results not improved
             results_dictionary[trade_number] = list()
-            results_dictionary[trade_number].append(IRB_time)
+            results_dictionary[trade_number].append(IRB_time) #0
             SL = float(candle[3]) - stop_loss_offset #IRB low
             if (entry_price - SL) < minimum_range: #SL is too close to the entry, meaning candle is too short
-                SL = entry_price - minimum_range #Reducing the stop-loss
+                SL = entry_price - minimum_range - entry_offset #Reducing the stop-loss
 
             percent_risk = SL/entry_price
             if percent_risk < maximum_percent_loss:
@@ -232,16 +224,16 @@ def gather_data(optimization_parameters):
                 #    break   #Commenting out, didn't seem to improve results at all
                 elif float(candle[2]) > float(entry_price): #The entry was hit
                     current_candle_time = candle[0]
-                    results_dictionary[trade_number].append(current_candle_time) #entry candle timestamp
-                    results_dictionary[trade_number].append(entry_price)
+                    results_dictionary[trade_number].append(current_candle_time) #1. entry candle timestamp
+                    results_dictionary[trade_number].append(entry_price) #2
 
                     for candle in klines: #Searching for PT or SL after entry is hit
                         if candle[0] < current_candle_time: #skipping candles that come before entry candle
                             continue
 
                         elif float(candle[2])>PT and float(candle[3])<SL: #PT and SL both hit in one candle
-                            results_dictionary[trade_number].append(0.01) #To identify candle in data
-                            results_dictionary[trade_number].append(946702800000) #Y2K to identify candle
+                            results_dictionary[trade_number].append(0.01) #3. To identify candle in data
+                            results_dictionary[trade_number].append(946702800000) #3. Y2K to identify candle
                             current_candle_time = candle[0]
                             trade_number += 1
                             draws += 1
@@ -250,11 +242,11 @@ def gather_data(optimization_parameters):
                         elif float(candle[2])>PT: #Profit Target is hit
                             sell_price = PT
                             sell_time = candle[0]
-                            results_dictionary[trade_number].append(float(sell_price))
-                            results_dictionary[trade_number].append(sell_time)
+                            results_dictionary[trade_number].append(float(sell_price)) #3
+                            results_dictionary[trade_number].append(sell_time) #4
                             current_candle_time = candle[0]
                             percent_gain_or_loss = round(((float(sell_price)/float(entry_price))-1)*100,2)
-                            results_dictionary[trade_number].append(percent_gain_or_loss)
+                            results_dictionary[trade_number].append(percent_gain_or_loss) #5
                             trade_number += 1
                             wins += 1
                             break
@@ -262,11 +254,11 @@ def gather_data(optimization_parameters):
                         elif float(candle[3])<SL: #Stop-loss is hit
                             sell_price = SL
                             sell_time = candle[0]
-                            results_dictionary[trade_number].append(float(sell_price))
-                            results_dictionary[trade_number].append(sell_time)
+                            results_dictionary[trade_number].append(float(sell_price)) #3
+                            results_dictionary[trade_number].append(sell_time) #4
                             current_candle_time = candle[0]
                             percent_gain_or_loss = round(((float(sell_price)/float(entry_price))-1)*100,3)
-                            results_dictionary[trade_number].append(percent_gain_or_loss)
+                            results_dictionary[trade_number].append(percent_gain_or_loss) #5
                             trade_number += 1
                             losses += 1
                             break
@@ -279,7 +271,7 @@ def gather_data(optimization_parameters):
                         results_dictionary[trade_number][0] = IRB_time #Overwriting IRB time in dictionary
                         SL = float(candle[3]) - stop_loss_offset
                         if (entry_price - SL) < minimum_range:
-                            SL = entry_price - minimum_range
+                            SL = entry_price - minimum_range - entry_offset
                         percent_risk = entry_price/SL
                         if percent_risk > maximum_percent_loss:
                             SL = entry_price - entry_price*maximum_percent_loss
@@ -290,9 +282,13 @@ def gather_data(optimization_parameters):
 
     final_results = list()
     num_hits = (wins+losses+draws)
-    win_rate = wins/(num_hits-int(draws/2))*100
+    if num_hits == 0:
+        num_hits = 1
+    win_rate = round(wins/(num_hits-int(draws/2))*100,2)
     final_results.append(num_hits)
     final_results.append(win_rate)
+
+    #print(results_dictionary)
 
     starting_amount = 1000
     for key,value in results_dictionary.items():
@@ -306,11 +302,31 @@ def gather_data(optimization_parameters):
     #return list of results. Should return number of hits, win rate, GOA. Perhaps average win and loss percentages?
 
 
+#Variable Initializations
+klines = client.get_historical_klines("BTCUSD", Client.KLINE_INTERVAL_15MINUTE, "29 Sep, 2022", "29 Nov, 2022")
+global repetition_check_open_time
+#Parameters not being optimized for the interest of time
+maximum_percent_loss = 0.989 #skip this one for now ########for max_loss in range(0.92,0.99,0.01)
+minimum_range = 100.0  #minimum difference between candle high and candle low, consider skipping these candles
+IRB_percent_limit = 0.45
+optimization_parameters = [0]*6
+
+test_optimization_parameters = [1.65, 10, 10, 0, 30, 30]
+print(gather_data(test_optimization_parameters)) #error was that maximum_percent_loss was set to 1
+
+start_time = time.time()
+gather_data(test_optimization_parameters)
+end_time = time.time()
+time_of_function = start_time - end_time
+print("--- %s seconds to run one test---" % (time.time() - start_time))
+quit()
+
+
 conn = sqlite3.connect('BackTestingResults.sqlite')
 cur = conn.cursor()
 commit_index = 0
-cur.execute('DROP TABLE IF EXISTS BT231122_011222')
-cur.execute('''CREATE TABLE BT231122_011222
+cur.execute('DROP TABLE IF EXISTS BT15Nov22_29Nov22') #Change name in two places below also
+cur.execute('''CREATE TABLE BT15Nov22_29Nov22
     (id     INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT UNIQUE,
     risk_reward_ratio FLOAT,
     num_candles_for_slope INTEGER,
@@ -323,38 +339,52 @@ cur.execute('''CREATE TABLE BT231122_011222
     account_balance FLOAT)
     ''')
 
-#Optimization Parameters #14 hours for 10,000 tests with 5 seconds per test
-for RRratio in range(1.05,1.95,0.15):
-    optimization_parameters[0] = RRratio
 
-    for num_candles in range(20,60,10):
+#Optimization Parameters #14 hours for 10,000 tests with 5 seconds per test
+for RRratio in range(105,210,15):
+    optimization_parameters[0] = RRratio/100
+
+    for num_candles in range(10,60,10):
         optimization_parameters[1] = num_candles
 
-        for min_EMA_change in range(10,50,10):
-            optimization_parameters[2] = min_EMA_change/17000
+        for min_EMA_change_loop in range(1,40,7):  #gather_data function stops working in this loop for some reason
+            optimization_parameters[2] = min_EMA_change_loop #Issue likely with min_EMA_change
 
-            for min_consec_candles in range(0,30,10):
+            for min_consec_candles in range(0,40,10):
                 optimization_parameters[3] = min_consec_candles
 
-                for entry_addition in range(0,30,10):
+                for entry_addition in range(0,40,10):
                     optimization_parameters[4] = entry_addition
 
-                    for SL_subtraction in range(0,30,10): #the final loop, output here
+                    for SL_subtraction in range(0,50,10): #the final loop, output here
                         optimization_parameters[5] = SL_subtraction
 
                         final_output_results = gather_data(optimization_parameters)
                         total_hits, win_rate, account_balance = final_output_results[0], final_output_results[1], final_output_results[2]
+                        #print(total_hits, win_rate, account_balance)
 
-                        cur.execute('''INSERT OR REPLACE INTO BT231122_011222
+                        cur.execute('''INSERT OR REPLACE INTO BT15Nov22_29Nov22
                             (risk_reward_ratio, num_candles_for_slope, minimum_EMA_change, minimum_consecutive_increasing_candles, entry_offset, stop_loss_offset, total_hits, win_rate, account_balance)
                             VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ? )''',
-                            ( RRratio, num_candles, min_EMA_change, min_consec_candles, entry_addition, SL_subtraction, total_hits, win_rate, account_balance) )
+                            (RRratio/100, num_candles, min_EMA_change_loop, min_consec_candles, entry_addition, SL_subtraction, total_hits, win_rate, account_balance) )
 
                         commit_index += 1
                         if commit_index % 100 == 0:
                             conn.commit()
+                        if commit_index % 200 == 0:
+                            print("Test # ", commit_index)
 
                         #add feature that lets you pause the tests, and have them pick up where they stopped
                         #search how to get a loop to jump to a certain point in the execution
 
+conn.commit()
 cur.close()
+
+
+
+
+
+
+
+
+############################
