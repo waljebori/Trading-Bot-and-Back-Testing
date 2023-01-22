@@ -19,9 +19,10 @@
 #3. Analyze the results to see if you can find any similar themes, consider skipping short candles
 #4. Create an "Overwritten signals" dictionary that stores the old data when a new signal is found before the entry is hit
 #### Store the old signal time, the old entry price, the new signal time, and the new signal price
-#5. Skip candles where the high-low is less than 50 (or another number)
-#6. Change the signal function to also return the entry, PT, and SL. Makes this more versatile for other strategies
+#5. Skip candles where the high-low is less than 50 (or another number), run in a seperate instance
+#6. Change the signal function (or new function) to also return the entry, PT, and SL. Makes this more versatile for other strategies
 #7. Continously refine the optimization parameters
+#8.
 #################################################################################################
 #################################################################################################
 
@@ -40,9 +41,11 @@ import sqlite3
 #######################################################################################################
 #######################################################################################################
 #APIkey
-api_key =
-api_secret =
-
+api_key = ''
+api_secret = ''
+#AWS Access Key ID:
+#AWS Secret Access Key:
+#EC2 Key Pair Name:
 client = Client(api_key, api_secret, tld='us')
 #######################################################################################################
 #######################################################################################################
@@ -187,16 +190,15 @@ def gather_data(optimization_parameters):
     minimum_range = 100.0
     #######################################################################################################
     #Parameters being optimized
-    maximum_percent_loss = optimization_parameters[0]
-    risk_reward_ratio = optimization_parameters[1]
+    risk_reward_ratio = optimization_parameters[0]  #for RRratio in range(1.00,2.00,0.20): 6
     global num_candles_for_slope
-    num_candles_for_slope = optimization_parameters[2]
+    num_candles_for_slope = optimization_parameters[1] #for num_candles in range(20,60,10) 5 #integers only
     global min_EMA_change
-    min_EMA_change = optimization_parameters[3]
+    min_EMA_change = optimization_parameters[2] #for min_EMA_change in range(10,50,10) 5
     global minimum_consecutive_increasing_candles
-    minimum_consecutive_increasing_candles = optimization_parameters[4]
-    entry_offset = optimization_parameters[5]  #Parameter exists only in this function
-    stop_loss_offset = optimization_parameters[6] #Parameter exists only in this function
+    minimum_consecutive_increasing_candles = optimization_parameters[3] #for min_consec_candles in range(0,30,10) 4 #integers only
+    entry_offset = optimization_parameters[4]  #Only in this function
+    stop_loss_offset = optimization_parameters[5] #Only in this function
     #######################################################################################################
 
     for candle in klines:
@@ -301,17 +303,20 @@ def gather_data(optimization_parameters):
     final_amount = round(starting_amount,2)
     final_results.append(final_amount)
     return final_results
-    #return list of results. Should return number of hits, win rate, GOA. Perhaps average win and loss percentages?
+    #return list of results. Should return number of hits, win rate, GOA.
+    #Consider adding average win/loss percentages, average time per trade, average time between trades
 
 
-#Static Variable Initializations
-klines = client.get_historical_klines("BTCUSD", Client.KLINE_INTERVAL_15MINUTE, "29 Nov, 2021", "29 Nov, 2022")
+#Variable Initializations
+klines = client.get_historical_klines("BTCUSD", Client.KLINE_INTERVAL_15MINUTE, "01 Nov, 2021", "29 Nov, 2022")
 global repetition_check_open_time
-minimum_range = 100.0  #minimum difference between candle high and low: skipping_doji_candles(candle)
+#Parameters not being optimized for the interest of time
+maximum_percent_loss = 0.989 #skip this one for now ########for max_loss in range(0.95,0.991,0.005)
+minimum_range = 100.0  #minimum difference between candle high and candle low, consider skipping these candles
 IRB_percent_limit = 0.45
+optimization_parameters = [0]*6
 
-optimization_parameters = [0]*7
-test_optimization_parameters = [0.985, 1.65, 10, 10, 0, 30, 30]
+test_optimization_parameters = [1.65, 10, 10, 0, 30, 30]
 #print(gather_data(test_optimization_parameters)) #error was that maximum_percent_loss was set to 1
 
 # start_time = time.time()
@@ -319,16 +324,16 @@ test_optimization_parameters = [0.985, 1.65, 10, 10, 0, 30, 30]
 # end_time = time.time()
 # time_of_function = start_time - end_time
 # print("--- %s seconds to run one test---" % (time.time() - start_time))
-# quit()
+#quit()
 
 
-conn = sqlite3.connect('BackTestingResults.sqlite')
+conn = sqlite3.connect('BackTestingResultsAWS.sqlite')
 cur = conn.cursor()
 commit_index = 0
-cur.execute('DROP TABLE IF EXISTS BT29Nov21_29Nov22')
-cur.execute('''CREATE TABLE BT29Nov21_29Nov22
+#cur.execute('DROP TABLE IF EXISTS BT01Nov21_29Nov22')
+
+cur.execute('''CREATE TABLE IF NOT EXISTS BT01Nov21_29Nov22
     (id     INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT UNIQUE,
-    maximum_risk FLOAT,
     risk_reward_ratio FLOAT,
     num_candles_for_slope INTEGER,
     minimum_EMA_change INTEGER,
@@ -341,51 +346,60 @@ cur.execute('''CREATE TABLE BT29Nov21_29Nov22
     ''')
 
 
+try:
+    cur.execute('SELECT * FROM BT01Nov21_29Nov22 ORDER BY id DESC LIMIT 1')
+    latest_test = cur.fetchone()
+    commit_index, SQL_RRratio, SQL_num_candles = latest_test[0], latest_test[1], latest_test[2]
+    SQL_min_EMA_change_loop, SQL_min_consec_candles, SQL_entry_addition = latest_test[3], latest_test[4], latest_test[5]
+    SQL_SL_subtraction = latest_test[6]
+    SQL_RRratio = int(SQL_RRratio*100)
+except:
+    print("Program starting new")
+
+
 #Optimization Parameters #14 hours for 10,000 tests with 5 seconds per test
-for max_risk in range(950,991,5):
-    optimization_parameters[0] = max_risk/1000
+for RRratio in range(105,211,15): #8
+    if RRratio < SQL_RRratio: continue
+    optimization_parameters[0] = RRratio/100
 
-    for RRratio in range(105,210,15):
-        optimization_parameters[1] = RRratio/100
+    for num_candles in range(10,41,10): #4
+        if RRratio == SQL_RRratio and num_candles < SQL_num_candles: continue
+        optimization_parameters[1] = num_candles
 
-        for num_candles in range(10,60,7): #6*5*5*4*4*4
-            optimization_parameters[2] = num_candles
+        for min_EMA_change_loop in range(0,36,7): #6
+            if RRratio == SQL_RRratio and num_candles == SQL_num_candles and min_EMA_change_loop < SQL_min_EMA_change_loop: continue
+            optimization_parameters[2] = min_EMA_change_loop
 
-            for min_EMA_change_loop in range(1,40,5):  #gather_data function stops working in this loop for some reason
-                optimization_parameters[3] = min_EMA_change_loop #Issue likely with min_EMA_change
+            for min_consec_candles in range(0,31,10): #4
+                if RRratio == SQL_RRratio and num_candles == SQL_num_candles and min_EMA_change_loop == SQL_min_EMA_change_loop and min_consec_candles < SQL_min_consec_candles: continue
+                optimization_parameters[3] = min_consec_candles
 
-                for min_consec_candles in range(0,40,10):
-                    optimization_parameters[4] = min_consec_candles
+                for entry_addition in range(0,31,10): #4
+                    if RRratio == SQL_RRratio and num_candles == SQL_num_candles and min_EMA_change_loop == SQL_min_EMA_change_loop and min_consec_candles == SQL_min_consec_candles and entry_addition < SQL_entry_addition: continue
+                    optimization_parameters[4] = entry_addition
 
-                    for entry_addition in range(0,40,10):
-                        optimization_parameters[5] = entry_addition
+                    for SL_subtraction in range(0,41,10): #5 Total test: 8*4*6*4*4*5 => 15,360 tests
+                        if RRratio == SQL_RRratio and num_candles == SQL_num_candles and min_EMA_change_loop == SQL_min_EMA_change_loop and min_consec_candles == SQL_min_consec_candles and entry_addition == SQL_entry_addition and SL_subtraction < SQL_SL_subtraction: continue
+                        optimization_parameters[5] = SL_subtraction
 
-                        for SL_subtraction in range(0,40,10): #the final loop, output here
-                            optimization_parameters[6] = SL_subtraction
 
-                            final_output_results = gather_data(optimization_parameters)
-                            total_hits, win_rate, account_balance = final_output_results[0], final_output_results[1], final_output_results[2]
-                            #print(total_hits, win_rate, account_balance)
+                        final_output_results = gather_data(optimization_parameters)
+                        total_hits, win_rate, account_balance = final_output_results[0], final_output_results[1], final_output_results[2]
+                        #print(total_hits, win_rate, account_balance)
 
-                            cur.execute('''INSERT OR REPLACE INTO BT29Nov21_29Nov22
-                                (maximum_risk, risk_reward_ratio, num_candles_for_slope, minimum_EMA_change, minimum_consecutive_increasing_candles, entry_offset, stop_loss_offset, total_hits, win_rate, account_balance)
-                                VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )''',
-                                (max_risk/10, RRratio/100, num_candles, min_EMA_change_loop, min_consec_candles, entry_addition, SL_subtraction, total_hits, win_rate, account_balance) )
+                        cur.execute('''INSERT OR REPLACE INTO BT01Nov21_29Nov22
+                            (risk_reward_ratio, num_candles_for_slope, minimum_EMA_change, minimum_consecutive_increasing_candles, entry_offset, stop_loss_offset, total_hits, win_rate, account_balance)
+                            VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ? )''',
+                            (RRratio/100, num_candles, min_EMA_change_loop, min_consec_candles, entry_addition, SL_subtraction, total_hits, win_rate, account_balance) )
 
-                            commit_index += 1
-                            if commit_index % 100 == 0:
-                                conn.commit()
-                            if commit_index % 100 == 0:
-                                print("Test # ", commit_index)
+                        commit_index += 1
+                        if commit_index % 10 == 0:
+                            print("Test # ", commit_index)
+                        if commit_index % 20 == 0:
+                            conn.commit()
 
-                            #add feature that lets you pause the tests, and have them pick up where they stopped
-                            #search how to get a loop to jump to a certain point in the execution
+
+
+
 conn.commit()
 cur.close()
-
-
-
-
-
-
-############################
